@@ -169,6 +169,8 @@ public final class TerminalEmulator {
 
     /** The current state of the escape sequence state machine. One of the ESC_* constants. */
     private int mEscapeState;
+    private boolean ESC_P_escape = false;
+    private boolean ESC_P_sixel = false;
 
     private final SavedScreenState mSavedStateMain = new SavedScreenState();
     private final SavedScreenState mSavedStateAlt = new SavedScreenState();
@@ -536,6 +538,7 @@ public final class TerminalEmulator {
                 // Starts an escape sequence unless we're parsing a string
                 if (mEscapeState == ESC_P) {
                     // XXX: Ignore escape when reading device control sequence, since it may be part of string terminator.
+                    ESC_P_escape = true;
                     return;
                 } else if (mEscapeState != ESC_OSC) {
                     startEscapeSequence();
@@ -815,8 +818,17 @@ public final class TerminalEmulator {
 
     /** When in {@link #ESC_P} ("device control") sequence. */
     private void doDeviceControl(int b) {
-        switch (b) {
-            case (byte) '\\': // End of ESC \ string Terminator
+        boolean firstSixel = false;
+        if (!ESC_P_sixel && (b=='$' || b=='-')) {
+            //Check if sixel sequence that needs breaking
+            String dcs = mOSCOrDeviceControlArgs.toString();
+            if (dcs.matches("[0-9;]*q.*")) {
+                firstSixel = true;
+            }
+        }
+        if (firstSixel || (ESC_P_escape && b == '\\') || (ESC_P_sixel && (b=='$' || b=='-')))
+            // ESC \ terminates OSC
+            // Sixel sequences may be very long. '$' and '!' are natural for breaking the sequence.
             {
                 String dcs = mOSCOrDeviceControlArgs.toString();
                 // DCS $ q P t ST. Request Status String (DECRQSS)
@@ -910,14 +922,108 @@ public final class TerminalEmulator {
                             Log.e(EmulatorDebug.LOG_TAG, "Invalid device termcap/terminfo name of odd length: " + part);
                         }
                     }
+                } else if (ESC_P_sixel || dcs.matches("[0-9;]*q.*")) {
+                    //Log.e("S", "eps=" + ESC_P_sixel+"  len(dcs)="+dcs.length()+"   b="+b);
+                    int pos = 0;
+                    if (!ESC_P_sixel) {
+                        ESC_P_sixel = true;
+                        mScreen.sixelStart(1024, 1024);
+                        while (dcs.codePointAt(pos) != 'q') {
+                            pos++;
+                        }
+                        pos++;
+                    } 
+                    if (b=='$' || b=='-') {
+                        // Add to string
+                        dcs = dcs + (char)b;
+                    }
+                    int rep = 1;
+                    while (pos < dcs.length()) {
+                        if (dcs.codePointAt(pos) == '"') {
+                            pos++;
+                            int args[]={0,0,0,0};
+                            int arg = 0;
+                            while (pos < dcs.length() && ((dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') || dcs.codePointAt(pos) == ';')) {
+                                if (dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') {
+                                    args[arg] = args[arg] * 10 + dcs.codePointAt(pos) - '0';
+                                } else {
+                                    arg++;
+                                    if (arg > 3) {
+                                        break;
+                                    }
+                                }
+                                pos++;
+                            }
+                            if (pos == dcs.length()) {
+                                break;
+                            }
+                        } else if (dcs.codePointAt(pos) == '#') {
+                            int col = 0;
+                            pos++;
+                            while (pos < dcs.length() && dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') {
+                                col = col * 10 + dcs.codePointAt(pos++) - '0';
+                            }
+                            if (pos == dcs.length()) {
+                                break;
+                            }
+                            if (dcs.codePointAt(pos) != ';') {
+                                mScreen.sixelSetColor(col);
+                            } else {
+                                pos++;
+                                int args[]={0,0,0,0};
+                                int arg = 0;
+                                while (pos < dcs.length() && ((dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') || dcs.codePointAt(pos) == ';')) {
+                                    if (dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') {
+                                        args[arg] = args[arg] * 10 + dcs.codePointAt(pos) - '0';
+                                    } else {
+                                        arg++;
+                                        if (arg > 3) {
+                                            break;
+                                        }
+                                    }
+                                    pos++;
+                                }
+                                //Log.e("Emulator", "arg="+arg +"  args[0]="+args[0]);
+                                if (pos == dcs.length()) {
+                                    break;
+                                }
+                                if (args[0] == 2) {
+                                    mScreen.sixelSetColor(col, args[1], args[2], args[3]);
+                                }
+                            }
+                        } else if (dcs.codePointAt(pos) == '!') {
+                            rep = 0;
+                            pos++;
+                            while (pos < dcs.length() && dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') {
+                                rep = rep * 10 + dcs.codePointAt(pos++) - '0';
+                            }
+                        } else if (dcs.codePointAt(pos) == '$' || dcs.codePointAt(pos) == '-' || (dcs.codePointAt(pos) >= '?' && dcs.codePointAt(pos) <= '~')) {
+                            //Log.e("E", "char=" + dcs.codePointAt(pos)+ "   rep="+rep);
+                            mScreen.sixelChar(dcs.codePointAt(pos++), rep);
+                            rep = 1;
+                        } else {
+                            pos++;
+                        }
+                    }
+                    if (b == '\\') {
+                        ESC_P_sixel = false;
+                        int n = mScreen.sixelEnd(mCursorRow, mCursorCol, cellW, cellH);
+                        for(;n>0;n--) {
+                            doLinefeed();
+                        }
+                    } else {
+                        mOSCOrDeviceControlArgs.setLength(0);
+                        // Do not finish sequence
+                        continueSequence(mEscapeState);
+                        return;
+                    }
                 } else {
                     if (LOG_ESCAPE_SEQUENCES)
                         Log.e(EmulatorDebug.LOG_TAG, "Unrecognized device control string: " + dcs);
                 }
                 finishSequence();
-            }
-            break;
-            default:
+            } else {
+                ESC_P_escape = false;
                 if (mOSCOrDeviceControlArgs.length() > MAX_OSC_STRING_LENGTH) {
                     // Too long.
                     mOSCOrDeviceControlArgs.setLength(0);
@@ -926,7 +1032,7 @@ public final class TerminalEmulator {
                     mOSCOrDeviceControlArgs.appendCodePoint(b);
                     continueSequence(mEscapeState);
                 }
-        }
+            }
     }
 
     private int nextTabStop(int numTabs) {
@@ -1305,6 +1411,7 @@ public final class TerminalEmulator {
                 break;
             case 'P': // Device control string
                 mOSCOrDeviceControlArgs.setLength(0);
+                ESC_P_escape = false;
                 continueSequence(ESC_P);
                 break;
             case '[':

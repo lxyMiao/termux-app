@@ -2,6 +2,10 @@ package com.termux.terminal;
 
 import java.util.Arrays;
 
+import android.graphics.Bitmap;
+import android.graphics.Rect;
+import android.util.Log;
+
 /**
  * A circular buffer of {@link TerminalRow}:s which keeps notes about what is visible on a logical screen and the scroll
  * history.
@@ -20,6 +24,129 @@ public final class TerminalBuffer {
     /** The index in the circular buffer where the visible screen starts. */
     private int mScreenFirstRow = 0;
 
+    final private int MAX_SIXELS = 16;
+    private Bitmap sixelBitmap[];
+    private int sixelCellW[];
+    private int sixelCellH[];
+    private int sixelWidth[];
+    private int sixelHeight[];
+    private int sixelNum = -1;
+    private int sixelX;
+    private int sixelY;
+    private int[] sixelColorMap;
+    private int sixelColor;
+    final private int sixelInitialColorMap[] = {0xFF000000, 0xFF3333CC, 0xFFCC2323, 0xFF33CC33, 0xFFCC33CC, 0xFF33CCCC, 0xFFCCCC33, 0xFF777777,
+                                                0xFF444444, 0xFF565699, 0xFF994444, 0xFF569956, 0xFF995699, 0xFF569999, 0xFF999956, 0xFFCCCCCC};
+
+    public Bitmap getSixelBitmap(int codePoint) {
+        int sn = (codePoint & 0x78000) >> 15;
+        return sixelBitmap[sn];
+    }
+
+    public Rect getSixelRect(int codePoint) {
+        int sn = (codePoint & 0x78000) >> 15;
+        int x = codePoint & 0xff;
+        int y = ((codePoint >> 8) & 0x7f) - 1;
+        Rect r = new Rect(x * sixelCellW[sn], y * sixelCellH[sn], (x+1) * sixelCellW[sn], (y+1) * sixelCellH[sn]);
+        //Log.e("TERMUX", "char=" + String.format("0x%08X", codePoint) + "  X=" + r.left + " y=" + r.top +"   r="+ r.right +"  b="+r.bottom);
+        return r;
+    }
+
+    public void sixelStart(int width, int height) {
+        sixelNum++;
+        if (sixelNum >= MAX_SIXELS) {
+            sixelNum = 0;
+        }
+        sixelBitmap[sixelNum] = Bitmap.createBitmap( width, height, Bitmap.Config.ARGB_8888);
+        sixelBitmap[sixelNum].eraseColor(0);
+        sixelWidth[sixelNum] = 0;
+        sixelHeight[sixelNum] = 0;
+        sixelX = 0;
+        sixelY = 0;
+        sixelColorMap = new int[256];
+        for (int i=0; i<16; i++) {
+            sixelColorMap[i] = sixelInitialColorMap[i];
+        }
+    }
+
+    public void sixelChar(int c, int rep) {
+        if (c == '$') {
+            sixelX = 0;
+            //Log.e("sixel", "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+            return;
+        }
+        if (c == '-') {
+            sixelX = 0;
+            sixelY += 6;
+            //Log.e("sixel","-------------------------------------------------------");
+            return;
+        }
+        int col = sixelColor;
+        if (sixelBitmap[sixelNum].getWidth() < sixelX + rep) {
+            // No drawing past image width
+            rep = sixelBitmap[sixelNum].getWidth() - sixelX;
+        }
+        while (rep-- > 0) {
+            if (c >= '?' && c <= '~') {
+                int b = c - '?';
+                //Log.e("TERMUX", "char=" + b + "  X=" + sixelX + " y=" + sixelY+ "     c=" + col);
+                for (int i = 0 ; i < 6 ; i++) {
+                    if ((b & (1<<i)) != 0) {
+                        //Log.e("d", " i=" + i + " x="+sixelX + " y=" + (sixelY + i));
+                        sixelBitmap[sixelNum].setPixel(sixelX, sixelY + i, col);
+                        //Log.e("d", " res="  + sixelBitmap.getPixel(sixelX, sixelY + i));
+
+                    }
+                }
+                sixelX += 1;
+                if (sixelX > sixelWidth[sixelNum]) {
+                    sixelWidth[sixelNum] = sixelX;
+                }
+                if (sixelY + 6 > sixelHeight[sixelNum]) {
+                    sixelHeight[sixelNum] = sixelY + 6;
+                }
+            }
+        }
+    }
+
+    public void sixelSetColor(int col) {
+        //Log.e("col1", "col="+col);
+        if (col >= 0 && col < 256) {
+            sixelColor = sixelColorMap[col];
+        }
+    }
+
+    public void sixelSetColor(int col, int r, int g, int b) {
+        //Log.e("col2", "col="+col+"  r="+r+"  g="+g+"  b="+b);
+        if (col >= 0 && col < 256) {
+            int red = Math.min(255, r*255/100);
+            int green = Math.min(255, g*255/100);
+            int blue = Math.min(255, b*255/100);
+            sixelColor = 0xff000000 + (red << 16) + (green << 8) + blue;
+            sixelColorMap[col] = sixelColor;
+        }
+    }
+
+    public int sixelEnd(int Y, int X, int cellW, int cellH) {
+        sixelCellW[sixelNum] = cellW;
+        sixelCellH[sixelNum] = cellH;
+        int w = Math.min(255,(sixelWidth[sixelNum] + cellW - 1) / cellW);
+        int h = Math.min(126,(sixelHeight[sixelNum] + cellH - 1) / cellH);
+        int s = 0;
+        for (int i=0; i<h; i++) {
+            if (Y+i-s == mScreenRows) {
+                scrollDownOneLine(0, mScreenRows, TextStyle.NORMAL);
+                s++;
+            }
+            for (int j=0; j<w ; j++) {
+                //Log.e("t", "Y+i-s=" + (Y+i-s) + "  mScreenRows=" + mScreenRows + "   mTotalRows=" + mTotalRows);
+                setChar(X+j, Y+i-s, 0x80000 + (sixelNum << 15) + ((i+1)<<8) + j, 0);
+            }
+        }
+//        Log.e("t", "cols = " + sixelBitmap.getPixel(0,0) + sixelBitmap.getPixel(0,1) + sixelBitmap.getPixel(0,2) + sixelBitmap.getPixel(0,3) + sixelBitmap.getPixel(0,4));
+        return h - s;
+    }
+
     /**
      * Create a transcript screen.
      *
@@ -35,6 +162,11 @@ public final class TerminalBuffer {
         mLines = new TerminalRow[totalRows];
 
         blockSet(0, 0, columns, screenRows, ' ', TextStyle.NORMAL);
+        sixelBitmap = new Bitmap[MAX_SIXELS];
+        sixelCellW = new int[MAX_SIXELS];
+        sixelCellH = new int[MAX_SIXELS];
+        sixelWidth = new int[MAX_SIXELS];
+        sixelHeight = new int[MAX_SIXELS];
     }
 
     public String getTranscriptText() {

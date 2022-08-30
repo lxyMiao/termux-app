@@ -1,8 +1,11 @@
 package com.termux.view;
 
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 
 import com.termux.terminal.TerminalBuffer;
@@ -10,6 +13,8 @@ import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalRow;
 import com.termux.terminal.TextStyle;
 import com.termux.terminal.WcWidth;
+
+import android.util.Log;
 
 /**
  * Renderer of a {@link TerminalEmulator} into a {@link Canvas}.
@@ -98,6 +103,23 @@ public final class TerminalRenderer {
                 final boolean charIsHighsurrogate = Character.isHighSurrogate(charAtIndex);
                 final int charsForCodePoint = charIsHighsurrogate ? 2 : 1;
                 final int codePoint = charIsHighsurrogate ? Character.toCodePoint(charAtIndex, line[currentCharIndex + 1]) : charAtIndex;
+                if (codePoint >= 0x80000) {
+                    //Log.e("Rend", " row=" + row+ "   col="+ column);
+                    float left = column * mFontWidth;
+                    float top = heightOffset - mFontLineSpacing;
+                    RectF r = new RectF(left, top, left + mFontWidth, top + mFontLineSpacing);
+                    //Log.e("Rend", " x=" + r.left+ "   y="+ r.top+ "   r="+ r.right+ "   b=" + r.bottom);
+                    canvas.drawBitmap(mEmulator.getScreen().getSixelBitmap(codePoint), mEmulator.getScreen().getSixelRect(codePoint), r, null);
+                    column += 1;
+                    measuredWidthForRun = 0.f;
+                    lastRunStyle = 0;
+                    lastRunInsideCursor = false;
+                    lastRunStartColumn = column;
+                    lastRunStartIndex = currentCharIndex;
+                    lastRunFontWidthMismatch = false;
+                    currentCharIndex += charsForCodePoint;
+                    continue;
+                }
                 final int codePointWcWidth = WcWidth.width(codePoint);
                 final boolean insideCursor = (column >= selx1 && column <= selx2) || (cursorX == column || (codePointWcWidth == 2 && cursorX == column + 1));
                 final long style = lineObject.getStyle(column);
