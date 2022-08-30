@@ -227,6 +227,13 @@ public final class TerminalEmulator {
 
     public final TerminalColors mColors = new TerminalColors();
 
+    private int cellW = 12, cellH = 12;
+
+    public void setCellSize(int w, int h) {
+        cellW = w;
+        cellH = h;
+    }
+
     private boolean isDecsetInternalBitSet(int bit) {
         return (mCurrentDecSetFlags & bit) != 0;
     }
@@ -1535,7 +1542,7 @@ public final class TerminalEmulator {
                 // The important part that may still be used by some (tmux stores this value but does not currently use it)
                 // is the first response parameter identifying the terminal service class, where we send 64 for "vt420".
                 // This is followed by a list of attributes which is probably unused by applications. Send like xterm.
-                if (getArg0(0) == 0) mSession.write("\033[?64;1;2;6;9;15;18;21;22c");
+                if (getArg0(0) == 0) mSession.write("\033[?64;1;2;4;6;9;15;18;21;22c");
                 break;
             case 'd': // ESC [ Pn d - Vert Position Absolute
                 setCursorRow(Math.min(Math.max(1, getArg0(1)), mRows) - 1);
@@ -1622,8 +1629,10 @@ public final class TerminalEmulator {
                         mSession.write("\033[3;0;0t");
                         break;
                     case 14: // Report xterm window in pixels. Result is CSI 4 ; height ; width t
-                        // We just report characters time 12 here.
-                        mSession.write(String.format(Locale.US, "\033[4;%d;%dt", mRows * 12, mColumns * 12));
+                        mSession.write(String.format(Locale.US, "\033[4;%d;%dt", mRows * cellH, mColumns * cellW));
+                        break;
+                    case 16: // Report xterm window in pixels. Result is CSI 4 ; height ; width t
+                        mSession.write(String.format(Locale.US, "\033[6;%d;%dt", cellH, cellW));
                         break;
                     case 18: // Report the size of the text area in characters. Result is CSI 8 ; height ; width t
                         mSession.write(String.format(Locale.US, "\033[8;%d;%dt", mRows, mColumns));
