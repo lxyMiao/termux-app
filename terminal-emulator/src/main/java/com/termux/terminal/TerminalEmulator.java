@@ -899,14 +899,14 @@ public final class TerminalEmulator {
     /** When in {@link #ESC_P} ("device control") sequence. */
     private void doDeviceControl(int b) {
         boolean firstSixel = false;
-        if (!ESC_P_sixel && (b=='$' || b=='-')) {
+        if (!ESC_P_sixel && (b=='$' || b=='-' || b=='#')) {
             //Check if sixel sequence that needs breaking
             String dcs = mOSCOrDeviceControlArgs.toString();
             if (dcs.matches("[0-9;]*q.*")) {
                 firstSixel = true;
             }
         }
-        if (firstSixel || (ESC_P_escape && b == '\\') || (ESC_P_sixel && (b=='$' || b=='-')))
+        if (firstSixel || (ESC_P_escape && b == '\\') || (ESC_P_sixel && (b=='$' || b=='-' || b=='#')))
             // ESC \ terminates OSC
             // Sixel sequences may be very long. '$' and '!' are natural for breaking the sequence.
             {
@@ -1014,7 +1014,7 @@ public final class TerminalEmulator {
                     int pos = 0;
                     if (!ESC_P_sixel) {
                         ESC_P_sixel = true;
-                        mScreen.sixelStart(1024, 1024);
+                        mScreen.sixelStart(100, 100);
                         while (dcs.codePointAt(pos) != 'q') {
                             pos++;
                         }
@@ -1050,10 +1050,7 @@ public final class TerminalEmulator {
                             while (pos < dcs.length() && dcs.codePointAt(pos) >= '0' && dcs.codePointAt(pos) <= '9') {
                                 col = col * 10 + dcs.codePointAt(pos++) - '0';
                             }
-                            if (pos == dcs.length()) {
-                                break;
-                            }
-                            if (dcs.codePointAt(pos) != ';') {
+                            if (pos == dcs.length() || dcs.codePointAt(pos) != ';') {
                                 mScreen.sixelSetColor(col);
                             } else {
                                 pos++;
@@ -1071,9 +1068,6 @@ public final class TerminalEmulator {
                                     pos++;
                                 }
                                 //Log.e("Emulator", "arg="+arg +"  args[0]="+args[0]);
-                                if (pos == dcs.length()) {
-                                    break;
-                                }
                                 if (args[0] == 2) {
                                     mScreen.sixelSetColor(col, args[1], args[2], args[3]);
                                 }
@@ -1100,6 +1094,9 @@ public final class TerminalEmulator {
                         }
                     } else {
                         mOSCOrDeviceControlArgs.setLength(0);
+                        if (b=='#') {
+                            mOSCOrDeviceControlArgs.appendCodePoint(b);
+                        }
                         // Do not finish sequence
                         continueSequence(mEscapeState);
                         return;

@@ -3,6 +3,7 @@ package com.termux.terminal;
 import java.util.Arrays;
 
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Rect;
 import android.util.Log;
 
@@ -37,6 +38,14 @@ public final class TerminalBuffer {
     private int sixelColor;
     final private int sixelInitialColorMap[] = {0xFF000000, 0xFF3333CC, 0xFFCC2323, 0xFF33CC33, 0xFFCC33CC, 0xFF33CCCC, 0xFFCCCC33, 0xFF777777,
                                                 0xFF444444, 0xFF565699, 0xFF994444, 0xFF569956, 0xFF995699, 0xFF569999, 0xFF999956, 0xFFCCCCCC};
+
+    private Bitmap resizeBitmap(Bitmap bm, int w, int h) {
+        int[] pixels = new int[bm.getAllocationByteCount()];
+        bm.getPixels(pixels, 0, bm.getWidth(), 0, 0, bm.getWidth(), bm.getHeight());
+        Bitmap newbm = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        newbm.setPixels(pixels, 0, bm.getWidth(), 0, 0, bm.getWidth(), bm.getHeight());
+        return newbm;
+    }
 
     public Bitmap getSixelBitmap(int codePoint) {
         int sn = (codePoint & 0x78000) >> 15;
@@ -83,8 +92,11 @@ public final class TerminalBuffer {
         }
         int col = sixelColor;
         if (sixelBitmap[sixelNum].getWidth() < sixelX + rep) {
-            // No drawing past image width
-            rep = sixelBitmap[sixelNum].getWidth() - sixelX;
+            sixelBitmap[sixelNum] = resizeBitmap(sixelBitmap[sixelNum], sixelX + rep + 100, sixelBitmap[sixelNum].getHeight());
+        }
+        if (sixelBitmap[sixelNum].getHeight() < sixelY + 6) {
+            // Very unlikely to resize both at the same time
+            sixelBitmap[sixelNum] = resizeBitmap(sixelBitmap[sixelNum], sixelBitmap[sixelNum].getWidth(), sixelY + 100);
         }
         while (rep-- > 0) {
             if (c >= '?' && c <= '~') {
@@ -95,7 +107,6 @@ public final class TerminalBuffer {
                         //Log.e("d", " i=" + i + " x="+sixelX + " y=" + (sixelY + i));
                         sixelBitmap[sixelNum].setPixel(sixelX, sixelY + i, col);
                         //Log.e("d", " res="  + sixelBitmap.getPixel(sixelX, sixelY + i));
-
                     }
                 }
                 sixelX += 1;
@@ -130,7 +141,7 @@ public final class TerminalBuffer {
     public int sixelEnd(int Y, int X, int cellW, int cellH) {
         sixelCellW[sixelNum] = cellW;
         sixelCellH[sixelNum] = cellH;
-        int w = Math.min(255,(sixelWidth[sixelNum] + cellW - 1) / cellW);
+        int w = Math.min(Math.min(mColumns - X, 255),(sixelWidth[sixelNum] + cellW - 1) / cellW);
         int h = Math.min(126,(sixelHeight[sixelNum] + cellH - 1) / cellH);
         int s = 0;
         for (int i=0; i<h; i++) {
