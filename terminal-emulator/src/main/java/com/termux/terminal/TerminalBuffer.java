@@ -158,6 +158,24 @@ public final class TerminalBuffer {
         return h - s;
     }
 
+    public int addImage(byte[] image, int Y, int X, int cellW, int cellH) {
+        Bitmap bm = BitmapFactory.decodeByteArray(image, 0, image.length);
+        if (bm != null) {
+            sixelNum++;
+            if (sixelNum >= MAX_SIXELS) {
+                sixelNum = 0;
+            }
+            sixelBitmap[sixelNum] = bm;
+            sixelWidth[sixelNum] = sixelBitmap[sixelNum].getWidth();
+            sixelHeight[sixelNum] = sixelBitmap[sixelNum].getHeight();
+            if ((sixelWidth[sixelNum] % cellW) != 0 || (sixelHeight[sixelNum] % cellH) != 0) {
+                sixelBitmap[sixelNum] = resizeBitmap(bm, ((sixelWidth[sixelNum]-1) / cellW) * cellW + cellW, ((sixelHeight[sixelNum]-1) / cellH) * cellH + cellH);
+            }
+            return sixelEnd(Y, X, cellW, cellH);
+        }
+        return 0;
+    }
+
     /**
      * Create a transcript screen.
      *

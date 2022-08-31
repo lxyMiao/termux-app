@@ -79,6 +79,9 @@ public final class TerminalEmulator {
     private static final int ESC_CSI_SINGLE_QUOTE = 18;
     /** Escape processing: CSI ! */
     private static final int ESC_CSI_EXCLAMATION = 19;
+    /** Escape processing: APC */
+    private static final int ESC_APC = 20;
+    private static final int ESC_APC_ESC = 21;
 
     /** The number of parameter arguments. This name comes from the ANSI standard for terminal escape codes. */
     private static final int MAX_ESCAPE_PARAMETERS = 16;
@@ -190,6 +193,8 @@ public final class TerminalEmulator {
     private int mEscapeState;
     private boolean ESC_P_escape = false;
     private boolean ESC_P_sixel = false;
+    private ArrayList<Byte> ESC_OSC_data;
+    private int ESC_OSC_colon = 0;
 
     private final SavedScreenState mSavedStateMain = new SavedScreenState();
     private final SavedScreenState mSavedStateAlt = new SavedScreenState();
@@ -568,7 +573,8 @@ public final class TerminalEmulator {
             case 7: // Bell (BEL, ^G, \a). If in an OSC sequence, BEL may terminate a string; otherwise signal bell.
                 if (mEscapeState == ESC_OSC)
                     doOsc(b);
-                else
+                else if (mEscapeState == ESC_APC)
+                    doApc(b);
                     mSession.onBell();
                 break;
             case 8: // Backspace (BS, ^H).
@@ -622,7 +628,11 @@ public final class TerminalEmulator {
                     ESC_P_escape = true;
                     return;
                 } else if (mEscapeState != ESC_OSC) {
-                    startEscapeSequence();
+                    if (mEscapeState != ESC_APC) {
+                        startEscapeSequence();
+                    } else {
+                        doApc(b);
+                    }
                 } else {
                     doOsc(b);
                 }
@@ -818,6 +828,12 @@ public final class TerminalEmulator {
                         }
                         break;
                     case ESC_PERCENT:
+                        break;
+                    case ESC_APC:
+                        doApc(b);
+                        break;
+                    case ESC_APC_ESC:
+                        doApcEsc(b);
                         break;
                     case ESC_OSC:
                         doOsc(b);
@@ -1019,7 +1035,7 @@ public final class TerminalEmulator {
                             pos++;
                         }
                         pos++;
-                    } 
+                    }
                     if (b=='$' || b=='-') {
                         // Add to string
                         dcs = dcs + (char)b;
@@ -1513,9 +1529,14 @@ public final class TerminalEmulator {
             case ']': // OSC
                 mOSCOrDeviceControlArgs.setLength(0);
                 continueSequence(ESC_OSC);
+                ESC_OSC_colon = -1;
                 break;
             case '>': // DECKPNM
                 setDecsetinternalBit(DECSET_BIT_APPLICATION_KEYPAD, false);
+                break;
+            case '_': // APC
+                mOSCOrDeviceControlArgs.setLength(0);
+                continueSequence(ESC_APC);
                 break;
             default:
                 unknownSequence(b);
@@ -1981,6 +2002,33 @@ public final class TerminalEmulator {
         }
     }
 
+    private void doApc(int b) {
+        switch (b) {
+            case 7: // Bell.
+                break;
+            case 27: // Escape.
+                continueSequence(ESC_APC_ESC);
+                break;
+            default:
+                collectOSCArgs(b);
+                continueSequence(ESC_OSC);
+        }
+    }
+
+    private void doApcEsc(int b) {
+        switch (b) {
+            case '\\':
+                break;
+            default:
+                // The ESC character was not followed by a \, so insert the ESC and
+                // the current character in arg buffer.
+                collectOSCArgs(27);
+                collectOSCArgs(b);
+                continueSequence(ESC_APC);
+                break;
+        }
+    }
+
     private void doOsc(int b) {
         switch (b) {
             case 7: // Bell.
@@ -1991,6 +2039,22 @@ public final class TerminalEmulator {
                 break;
             default:
                 collectOSCArgs(b);
+                if (ESC_OSC_colon == -1 && b == ':') {
+                    // Collect base64 data for OSC 1337
+                    ESC_OSC_colon = mOSCOrDeviceControlArgs.length();
+                    ESC_OSC_data = new ArrayList<Byte>(65536);
+                } else if (ESC_OSC_colon >= 0 && mOSCOrDeviceControlArgs.length() - ESC_OSC_colon == 4) {
+                    try {
+                        byte[] decoded = Base64.decode(mOSCOrDeviceControlArgs.substring(ESC_OSC_colon), 0);
+                        for (int i = 0 ; i < decoded.length; i++) {
+                            ESC_OSC_data.add(decoded[i]);
+                        }
+                    } catch(Exception e) {
+                        // Ignore non-Base64 data.
+                    }
+                    mOSCOrDeviceControlArgs.setLength(ESC_OSC_colon);
+
+                }
                 break;
         }
     }
@@ -2147,6 +2211,40 @@ public final class TerminalEmulator {
                 mSession.onColorsChanged();
                 break;
             case 119: // Reset highlight color.
+                break;
+            case 1337: // iTerm extemsions
+                if (textParameter.startsWith("File=")) {
+                    if (ESC_OSC_colon >= 0 && mOSCOrDeviceControlArgs.length() > ESC_OSC_colon) {
+                        while (mOSCOrDeviceControlArgs.length() - ESC_OSC_colon < 4) {
+                            mOSCOrDeviceControlArgs.append('=');
+                        }
+                        try {
+                            byte[] decoded = Base64.decode(mOSCOrDeviceControlArgs.substring(ESC_OSC_colon), 0);
+                            for (int i = 0 ; i < decoded.length; i++) {
+                                ESC_OSC_data.add(decoded[i]);
+                            }
+                        } catch(Exception e) {
+                            // Ignore non-Base64 data.
+                        }
+                        mOSCOrDeviceControlArgs.setLength(ESC_OSC_colon);
+                    }
+                    if (ESC_OSC_colon >= 0) {
+                        Log.e("1337", "len = " + ESC_OSC_data.size());
+                        byte[] result = new byte[ESC_OSC_data.size()];
+                        for(int i = 0; i < ESC_OSC_data.size(); i++) {
+                            result[i] = ESC_OSC_data.get(i).byteValue();
+                        }
+                        int n = mScreen.addImage(result, mCursorRow, mCursorCol, cellW, cellH);
+                        for(;n>0;n--) {
+                            doLinefeed();
+                        }
+                        ESC_OSC_data.clear();
+                    } else {
+                        Log.e("1337", "no data");
+                    }
+                } else if (textParameter.startsWith("ReportCellSize")) {
+                    mSession.write(String.format(Locale.US, "\0331337;ReportCellSize=%d;%d\007", cellH, cellW));
+                }
                 break;
             default:
                 unknownParameter(value);
