@@ -36,6 +36,7 @@ android {
 
         implementation project(":terminal-view")
         implementation project(":termux-shared")
+        //implementation 'com.ibm.icu:icu4j:71.1'
     }
 
     defaultConfig {
