@@ -19,7 +19,6 @@ import com.ibm.icu.text.ArabicShapingException;
 import com.ibm.icu.text.Bidi;
 import com.ibm.icu.text.BidiRun;
 
-import android.util.Log;
 /**
  * Renderer of a {@link TerminalEmulator} into a {@link Canvas}.
  * <p/>
@@ -151,7 +150,6 @@ public final class TerminalRenderer {
                     currentCharIndex += charsForCodePoint;
                     continue;
                 }
-                Log.w( "termux render", "char " + charAtIndex + " " + column + "  w="+mTextPaint.measureText(line, currentCharIndex, charsForCodePoint)+ "   fw="+mFontWidth );
                 final int codePointWcWidth = WcWidth.width(codePoint);
                 final boolean insideCursor = (cursorX == column || (codePointWcWidth == 2 && cursorX == column + 1));
                 final boolean insideSelection = column >= selx1 && column <= selx2;
@@ -204,7 +202,6 @@ public final class TerminalRenderer {
             if (lastRunInsideCursor && cursorShape == TerminalEmulator.TERMINAL_CURSOR_STYLE_BLOCK) {
                 invertCursorTextColor = true;
             }
-            Log.w("termux render", "len=" + charsSinceLastRun);
 
             drawTextRun(canvas, line, palette, heightOffset, lastRunStartColumn, columnWidthSinceLastRun, lastRunStartIndex, charsSinceLastRun,
                 measuredWidthForRun, cursorColor, cursorShape, lastRunStyle, reverseVideo || invertCursorTextColor || lastRunInsideSelection);
